@@ -48,7 +48,7 @@ end
 
 --[[
 	Find the spline segment index and the corresponding segment weight/fraction
-	at the provided non-linear progress on the curve
+	at the provided time on the curve
 ]]
 type SegmentDetails = {
 	Index: number;

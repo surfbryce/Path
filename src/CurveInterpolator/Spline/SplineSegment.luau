@@ -116,7 +116,7 @@ local function CalculateCoefficientsPerAxis(
 	return coefficientsPerAxis
 end
 
--- Calculates vector component for a point along the curve segment at the specified progress
+-- Calculates vector component for a point along the curve segment at the specified time
 local function GetValueAtTime(time: number, coefficients: Coefficients): number
 	return (
 		(coefficients[1] * (time ^ 3))
@@ -126,7 +126,7 @@ local function GetValueAtTime(time: number, coefficients: Coefficients): number
 	)
 end
 
--- Calculates vector component for the derivative of the curve segment at the specified progress
+-- Calculates vector component for the derivative of the curve segment at the specified time
 local function GetDerivativeAtTime(time: number, coefficients: Coefficients): number
 	return (
 		(3 * coefficients[1] * (time ^ 2))
@@ -135,7 +135,7 @@ local function GetDerivativeAtTime(time: number, coefficients: Coefficients): nu
 	)
 end
 
--- Calculates vector component for the second derivative of the curve segment at the specified progress
+-- Calculates vector component for the second derivative of the curve segment at the specified time
 local function GetSecondDerivativeAtTime(time: number, coefficients: Coefficients): number
 	return (
 		(6 * coefficients[1] * time)
@@ -143,7 +143,7 @@ local function GetSecondDerivativeAtTime(time: number, coefficients: Coefficient
 	)
 end
 
--- Solves the cubic spline for our intersection-value to get our progress-points (the roots of the spline)
+-- Solves the cubic spline for our intersection-value to get our segment-time points (the roots of the spline)
 local function FindSegmentTimeIntersectionsOnAxis(valueToIntersect: number, axisCoefficients: Coefficients): {number}
 	-- Extract our coefficients
 	local degree3, degree2 = axisCoefficients[1], axisCoefficients[2]
@@ -155,7 +155,7 @@ local function FindSegmentTimeIntersectionsOnAxis(valueToIntersect: number, axis
 		return {0}
 	end
 
-	-- Finally, return all the progress-values where we intersect our provided value
+	-- Finally, return all the segment times where we intersect our provided value
 	local validRoots = {}
 	for _, root in ipairs(Math.GetCubicRoots(degree3, degree2, degree1, deltaConstant)) do
 		if (root > -Math.Epsilon) and (root <= (1 + Math.Epsilon)) then
