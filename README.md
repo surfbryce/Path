@@ -17,6 +17,10 @@ the options and points. **Start the demo by (Run)ning a Server in Studio**.
 You can drag the points around in the live-view to see the path change in
 real-time. Then go in the code to change the "Curviness" and other options.
 
+Get the [Roblox Model](https://create.roblox.com/marketplace/asset/15493350845/Curve-Interpolator) if you want to add it from within Studio.
+
+There is also always a [rbxm file included within the latest release](https://github.com/surfbryce/Curve-Interpolator-Roblox/releases) which you can drap and drop into Studio.
+
 ### Changes from the Original
 - Instead of points being represented as an array, all points
 are represented in Vector3.
