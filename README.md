@@ -12,10 +12,14 @@ So if you ever need to see how something works, understand a concept,
 check the types, or find out what certain options do,
 it'll all be in the code and explained.
 
+This implementation is also _extremely_ optimized compared to the original, being able to call the GetPointAtTime method ***100,000 TIMES*** in only **18ms** with an equal amount of unique "time"s being used. It is also the fastest implementation available on the Roblox platform with an API this extensive.
+
 There is also a demo provided which you can use to play around with
 the options and points. **Start the demo by (Run)ning a Server in Studio**.
-You can drag the points around in the live-view to see the path change in
-real-time. Then go in the code to change the "Curviness" and other options.
+Common use-cases found in the Demo:
+- Path Rendering
+- Time to Point Location and Curvature Details at Time (Normal/Tangent being used)
+- Locating Closest Point on Curve to a Provided Position
 
 Get the [Roblox Model](https://create.roblox.com/marketplace/asset/15493350845/Curve-Interpolator) if you want to add it from within Studio.
 
@@ -51,4 +55,11 @@ are represented in Vector3.
       it begins and you'll have trouble finding where it ends.
     - This was done because the codebase was not capable of explaining itself
       and most names were simply confusing/ambiguous.
+- Module/Function Collapsing
+    - A lot of performance can be saved by localizing methods and collapsing functions
+      into inline code. This can be done because a majority of these module functions
+      and utility functions have only one location use, so inlining them into the code
+      and transferring the comments is the best way to go not only for ease of debugging
+      but also for the performance since its inlined and not having to go through
+      another function call or reference.
 
