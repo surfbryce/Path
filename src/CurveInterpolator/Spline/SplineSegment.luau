@@ -217,23 +217,14 @@ local function CalculateCoefficientsPerAxis(
 	}
 end
 
--- Calculates vector component for a point along the curve segment at the specified progress
+-- Calculates vector component for a point along the curve segment at the specified progress (using horners method)
 local function GetValueAtTime(time: number, coefficients: Coefficients): number
-	return (
-		(coefficients[1] * (time ^ 3))
-		+ (coefficients[2] * (time ^ 2))
-		+ (coefficients[3] * time)
-		+ coefficients[4]
-	)
+	return coefficients[4] + (time * (coefficients[3] + (time * (coefficients[2] + time * coefficients[1]))))
 end
 
--- Calculates vector component for the derivative of the curve segment at the specified progress
+-- Calculates vector component for the derivative of the curve segment at the specified progress (using horners method)
 local function GetDerivativeAtTime(time: number, coefficients: Coefficients): number
-	return (
-		(3 * coefficients[1] * (time ^ 2))
-		+ (2 * coefficients[2] * time)
-		+ coefficients[3]
-	)
+	return coefficients[3] + (time * ((2 * coefficients[2]) + (time * 3 * coefficients[1])))
 end
 
 -- Calculates vector component for the second derivative of the curve segment at the specified progress

@@ -62,4 +62,6 @@ are represented in Vector3.
       and transferring the comments is the best way to go not only for ease of debugging
       but also for the performance since its inlined and not having to go through
       another function call or reference.
+- Equation Optimization
+    - Optimized the function GetValueAtTime/GetDerivativeAtTime by switching from the standard polynomial calculation to Horner's method. This change reduces the number of multiplications required for each evaluation, enhancing the function's performance and efficiency.
 
