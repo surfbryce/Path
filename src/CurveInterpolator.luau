@@ -254,7 +254,7 @@ do
 				local pointAtTime = GetPointAtTime(self, time)
 				local distance = (pointAtTime - point).Magnitude
 				if distance < closestDistance then
-					closestDistance, closestTime = distance, time
+					closestDistance, closestTime, closestPoint = distance, time, pointAtTime
 				end
 			end
 
