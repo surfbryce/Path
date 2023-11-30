@@ -5,7 +5,6 @@ local Root = script
 local InternalTypes = require(Root.Core.InternalTypes)
 
 -- Core Modules
-local Math = require(Root.Core.Math)
 local Utils = require(Root.Core.Utils)
 
 -- Spline Modules
@@ -111,7 +110,7 @@ do
 		if time == 0 then
 			return points[1]
 		elseif time == 1 then
-			return (self.Closed and points[1] or points[#points])
+			return (self.Closed and points[1] or points[self.PointCount])
 		end
 
 		-- Finally, find our point by solving our axis-values
@@ -164,8 +163,9 @@ do
 	type CurvatureDetails = {
 		Curvature: number;
 		Radius: number;
+
+		Normal: InternalTypes.Point;
 		Tangent: InternalTypes.Point;
-		Direction: InternalTypes.Point;
 	}
 	function GetCurvatureAtTime(
 		self: CurveInterpolatorInternal,
@@ -175,25 +175,21 @@ do
 
 		local derivative = self:ProcessAxisCoefficientsAtTime(SplineSegment.GetDerivativeAtTime, time)
 		local secondDerivative = self:ProcessAxisCoefficientsAtTime(SplineSegment.GetSecondDerivativeAtTime, time)
-
-		local tangent = derivative.Unit
-		local curvature = 0
-
 		local derivativeLength = derivative.Magnitude
 		local derivativeCross = derivative:Cross(secondDerivative)
-		local direction = derivativeCross:Cross(derivative).Unit
 
-		if derivativeLength > 0 then
-			curvature = (derivativeCross.Magnitude / (derivativeLength ^ 3))
-		end
-
-		local radius = ((curvature > 0) and (1 / curvature) or 0)
-
+		local curvature = (
+			if derivativeLength > 0 then
+				(derivativeCross.Magnitude / (derivativeLength ^ 3))
+			else
+				0
+		)
 		return {
 			Curvature = curvature;
-			Radius = radius;
-			Tangent = tangent;
-			Direction = direction;
+			Radius = ((curvature > 0) and (1 / curvature) or 0);
+
+			Normal = derivativeCross:Cross(derivative).Unit;
+			Tangent = derivative.Unit;
 		}
 	end
 
@@ -222,10 +218,10 @@ do
 	): ClosestDetails
 		-- Default our threshold and samples
 		local threshold = (threshold or DefaultSearchThreshold)
-		local samples = (samples or ((#self.Points - 1) * 10))
+		local samples = (samples or ((self.PointCount - 1) * 10))
 
 		-- Verify our threshold
-		if (threshold <= 0) or  (Math.IsFinite(threshold) == false) then
+		if (threshold <= 0) then
 			error(`Invalid Threshold ({threshold}) for GetClosestProgressToPoint`)
 		end
 
@@ -251,7 +247,7 @@ do
 		-- Grab our closest time
 		local closestTime = self:GetTimeFromProgress(closestProgress)
 
-		-- Handle bisecting our curve to narrow down our closest-progress
+		-- Handle bisecting our curve to narrow down our closest-time
 		local closestPoint = GetPointAtTime(self, closestTime)
 		local function Bisect(time: number): boolean
 			if (time >= 0) and (time <= 1) then
@@ -273,12 +269,9 @@ do
 			end
 		end
 
-		-- Now update our progress
-		closestProgress = self:GetProgressFromTime(closestTime)
-
 		-- Finally, return everything we've gotten
 		return {
-			Progress = closestProgress;
+			Progress = self:GetProgressFromTime(closestTime);
 			Time = closestTime;
 
 			Point = closestPoint;
@@ -297,15 +290,16 @@ do
 
 		-- Go through and find all our time-intersections
 		local timeIntersections = {}
-		local pointCount = (self.Closed and (#self.Points + 1) or #self.Points)
+		local pointCount = (self.Closed and (self.PointCount + 1) or self.PointCount)
 		for segmentIndex = 1, (pointCount - 1) do
 			-- Determine our main parameters for our segment
-			local controlPoints = SplineCurve.GetControlPoints(segmentIndex, self.Points, self.Closed)
-			local controlExtremeA, controlExtremeB = controlPoints[2][axis], controlPoints[3][axis]
-			local coefficients = self:CalculateCoefficientsPerAxisForSegment(segmentIndex)[axis]
+			local _, controlExtremeA, controlExtremeB = SplineCurve.GetControlPoints(segmentIndex, self.Points, self.Closed)
+			local controlExtremeA, controlExtremeB = controlExtremeA[axis], controlExtremeB[axis]
+			local coefficients = self.SegmentCoefficientsPerAxis[segmentIndex][axis]
 
 			-- Determine the minimum/maximum value for our axis
-			local axisMinimum, axisMaximum = math.min(controlExtremeA, controlExtremeB), math.max(controlExtremeA, controlExtremeB)
+			local axisMinimum = math.min(controlExtremeA, controlExtremeB)
+			local axisMaximum = math.max(controlExtremeA, controlExtremeB)
 
 			-- Now see if our value we want to intersect falls into our segment range
 			if ((valueToIntersect + margin) >= axisMinimum) and ((valueToIntersect - margin) <= axisMaximum) then
@@ -358,7 +352,7 @@ do
 end
 
 -- State Management Functions
-function InvalidateCache(self: CurveInterpolatorInternal)
+function OnCacheUpdate(self: CurveInterpolatorInternal)
 	self.CachedLookupTables = {}
 end
 
@@ -440,9 +434,7 @@ function Interface.new(points: InternalTypes.Points, options: Options?): CurveIn
 		Points = points;
 		Closed = closed;
 
-		OnCacheInvalidation = function()
-			InvalidateCache(curveInterpolator)
-		end;
+		OnCacheUpdate = OnCacheUpdate;
 	}
 	curveInterpolator = (
 		if (options ~= nil) and (options.ArcDivisions ~= nil) then

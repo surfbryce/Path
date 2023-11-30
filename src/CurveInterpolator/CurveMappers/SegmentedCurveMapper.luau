@@ -5,7 +5,6 @@ local Root = script.Parent.Parent
 local InternalTypes = require(Root.Core.InternalTypes)
 
 -- Core Modules
-local Math = require(Root.Core.Math)
 local Utils = require(Root.Core.Utils)
 
 -- Spline Modules
@@ -20,7 +19,8 @@ type SegmentedCurveMapperInternal = (
 	BaseCurveMapper.BaseCurveMapper
 	& {
 		SubDivisions: number;
-		CachedArcLengths: InternalTypes.ArcLengths?;
+		SegmentArcLengths: InternalTypes.ArcLengths;
+		SegmentArcLengthCount: number;
 	}
 )
 
@@ -28,64 +28,56 @@ type SegmentedCurveMapperInternal = (
 
 	Approximate spline curve by subdividing it into smaller linear
 	line segments. Used to approximate length and mapping between
-	'Time' (Linear) and 'Progress' (Non-Linear) on the curve.
+	'Time' (Non-Linear) and 'Progress' (Linear) on the curve.
 
 ]]
 local Interface = {
 	DefaultSubDivisions = 300;
 }
 
--- Worker Functions
+-- Storage Functions
 do
 	--[[
 		Break curve into segments and return the curve length at each segment index.
 		Used for mapping between 'Time' and 'Progress' along the curve.
 	]]
-	function ComputeArcLengths(segmentedCurveMapper: SegmentedCurveMapperInternal): InternalTypes.ArcLengths
+	function ComputeArcLengths(self: SegmentedCurveMapperInternal)
+		-- Make sure we even have points
+		local points = self.Points
+
+		-- Now prepare ourselves for length computation
 		local lengths: InternalTypes.ArcLengths = {0}
-		local last = segmentedCurveMapper:ProcessAxisCoefficientsAtTime(SplineSegment.GetValueAtTime, 0)
+		local last = self:ProcessAxisCoefficientsAtTime(SplineSegment.GetValueAtTime, 0)
 		local current: InternalTypes.Point
 		local sum = 0
-		for subDivision = 1, segmentedCurveMapper.SubDivisions do
-			current = segmentedCurveMapper:ProcessAxisCoefficientsAtTime(
-				SplineSegment.GetValueAtTime, (subDivision / segmentedCurveMapper.SubDivisions)
-			)
+		for subDivision = 1, self.SubDivisions do
+			current = self:ProcessAxisCoefficientsAtTime(SplineSegment.GetValueAtTime, (subDivision / self.SubDivisions))
 			sum += (current - last).Magnitude
 			table.insert(lengths, sum)
 			last = current
 		end
 
-		return lengths
+		self.SegmentArcLengths = lengths
+		self.SegmentArcLengthCount = #lengths
 	end
 end
 
 -- Worker Methods
 do
-	function GetArcLengths(segmentedCurveMapper: SegmentedCurveMapperInternal): InternalTypes.ArcLengths
-		local arcLengths = segmentedCurveMapper.CachedArcLengths
-		if arcLengths == nil then
-			arcLengths = ComputeArcLengths(segmentedCurveMapper)
-			segmentedCurveMapper.CachedArcLengths = arcLengths
-		end
-
-		return arcLengths
-	end
-
 	function GetDistanceFromProgress(
-		segmentedCurveMapper: SegmentedCurveMapperInternal,
+		self: SegmentedCurveMapperInternal,
 		progress: number
 	): number
-		local arcLengths = GetArcLengths(segmentedCurveMapper)
-		return (Utils.AssertInRange(progress) * arcLengths[#arcLengths])
+		return (Utils.AssertInRange(progress) * self.SegmentArcLengths[self.SegmentArcLengthCount])
 	end
 
 	function GetTimeFromProgress(
-		segmentedCurveMapper: SegmentedCurveMapperInternal,
+		self: SegmentedCurveMapperInternal,
 		progress: number
 	): number
 		-- Grab arc-length information
-		local arcLengths = GetArcLengths(segmentedCurveMapper)
-		local totalArcLengths = #arcLengths
+		local arcLengths = self.SegmentArcLengths
+		local totalArcLengths = self.SegmentArcLengthCount
 		local targetArcLength = (Utils.AssertInRange(progress) * arcLengths[totalArcLengths])
 
 		-- Try to see if we can find our desired arc-length immediately
@@ -107,7 +99,7 @@ do
 	end
 
 	function GetProgressFromTime(
-		segmentedCurveMapper: SegmentedCurveMapperInternal,
+		self: SegmentedCurveMapperInternal,
 		time: number
 	): number
 		Utils.AssertInRange(time)
@@ -120,8 +112,8 @@ do
 		end
 
 		-- Grab our arc-length information
-		local arcLengths = GetArcLengths(segmentedCurveMapper)
-		local totalArcLengths = #arcLengths
+		local arcLengths = self.SegmentArcLengths
+		local totalArcLengths = self.SegmentArcLengthCount
 		local totalLength = arcLengths[totalArcLengths]
 
 		-- Need to denormalize our time to find the matching length
@@ -134,22 +126,17 @@ do
 
 		-- Measure the length between our provided progress and the progress at SubDenormalizedProgressIndex
 		local subTime = Utils.GetIterationProgress(subDenormalizedTimeIndex, totalArcLengths)
-		local subPoint = segmentedCurveMapper:ProcessAxisCoefficientsAtTime(
-			SplineSegment.GetValueAtTime, subTime
-		)
-		local ourPoint = segmentedCurveMapper:ProcessAxisCoefficientsAtTime(
-			SplineSegment.GetValueAtTime, time
-		)
+		local subPoint = self:ProcessAxisCoefficientsAtTime(SplineSegment.GetValueAtTime, subTime)
+		local ourPoint = self:ProcessAxisCoefficientsAtTime(SplineSegment.GetValueAtTime, time)
 		local length = (subDenormalizedTimeLength + (ourPoint - subPoint).Magnitude)
 
 		return (length / totalLength)
 	end
 end
 
--- State Management Methods
-function InvalidateCache(segmentedCurveMapper: SegmentedCurveMapperInternal)
-	segmentedCurveMapper.CachedArcLengths = nil
-	segmentedCurveMapper:InvalidateBaseCache()
+-- State Management Functions
+function OnCacheUpdate(self: SegmentedCurveMapperInternal)
+	ComputeArcLengths(self)
 end
 
 -- Contructor
@@ -161,9 +148,8 @@ function Interface.new(
 		configuration,
 		{
 			SubDivisions = subDivisions;
-			CachedArcLengths = nil;
 		},
-		InvalidateCache,
+		OnCacheUpdate,
 		GetDistanceFromProgress,
 		GetTimeFromProgress,
 		GetProgressFromTime

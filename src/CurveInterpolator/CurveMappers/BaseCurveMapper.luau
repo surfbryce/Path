@@ -6,30 +6,31 @@ local InternalTypes = require(Root.Core.InternalTypes)
 
 -- Core Modules
 local Utils = require(Root.Core.Utils)
-local Math = require(Root.Core.Math)
 
 -- Spline Modules
 local SplineCurve = require(Root.Spline.SplineCurve)
 local SplineSegment = require(Root.Spline.SplineSegment)
 
 -- Our Types
-type OnCacheInvalidation = (() -> ())
+type OnCacheUpdate = ((self: any) -> ())
 export type Configuration = (
 	SplineSegment.CurveParameters
 	& {
 		Points: InternalTypes.Points;
 		Closed: boolean;
 
-		OnCacheInvalidation: OnCacheInvalidation;
+		OnCacheUpdate: OnCacheUpdate;
 	}
 )
 type BaseCurveMapperInternal = (
 	SplineSegment.CurveParameters
 	& {
-		CachedCoefficientsPerAxis: {[number]: SplineSegment.CoefficientsPerAxis}; -- [SegmentIndex]: CoefficientsPerAxis
-		OnCacheInvalidation: OnCacheInvalidation?;
+		SegmentCoefficientsPerAxis: {[number]: SplineSegment.CoefficientsPerAxis}; -- [SegmentIndex]: CoefficientsPerAxis
+		OnCacheUpdate: OnCacheUpdate?;
+		ConfigurationOnCacheUpdate: OnCacheUpdate?;
 
 		Points: InternalTypes.Points;
+		PointCount: number;
 		Closed: boolean;
 	}
 )
@@ -46,106 +47,130 @@ type BaseCurveMapperInternal = (
 ]]
 local Interface = {}
 
+-- Storage Functions
+do
+	function CalculateCoefficientsPerAxisForSegments(self: BaseCurveMapperInternal)
+		local points = self.Points
+		local pointCount = self.PointCount
+		local isClosed = self.Closed
+		local segmentCoefficientsPerAxis = {}
+		for segmentIndex = 1, (isClosed and pointCount or (pointCount - 1)) do
+			local point1, point2, point3, point4 = SplineCurve.GetControlPoints(segmentIndex, points, isClosed)
+			segmentCoefficientsPerAxis[segmentIndex] = SplineSegment.CalculateCoefficientsPerAxis(
+				point1, point2, point3, point4,
+				self.Curviness, self.Softness
+			)
+		end
+		self.SegmentCoefficientsPerAxis = segmentCoefficientsPerAxis
+	end
+end
+
 -- Worker Methods
 do
-	function CalculateCoefficientsPerAxisForSegment(
-		baseCurveMapper: BaseCurveMapperInternal,
-		segmentIndex: number
-	): SplineSegment.CoefficientsPerAxis
-		local coefficientsPerAxis = baseCurveMapper.CachedCoefficientsPerAxis[segmentIndex]
-		if coefficientsPerAxis == nil then
-			local controlPoints = SplineCurve.GetControlPoints(
-				segmentIndex, baseCurveMapper.Points,
-				baseCurveMapper.Closed
-			)
-			coefficientsPerAxis = SplineSegment.CalculateCoefficientsPerAxis(
-				controlPoints[1], controlPoints[2], controlPoints[3], controlPoints[4],
-				{
-					Curviness = baseCurveMapper.Curviness;
-					Softness = baseCurveMapper.Softness;
-				}
-			)
-			baseCurveMapper.CachedCoefficientsPerAxis[segmentIndex] = coefficientsPerAxis
-		end
-
-		return coefficientsPerAxis
-	end
-
 	function ProcessAxisCoefficientsAtTime(
-		baseCurveMapper: BaseCurveMapperInternal,
+		self: BaseCurveMapperInternal,
 		processor: SplineSegment.AxisCoefficientsProcessor,
 		time: number
 	): InternalTypes.Point
-		local segmentDetails = SplineCurve.GetSegmentDetailsAtTime(
-			time, baseCurveMapper.Points,
-			baseCurveMapper.Closed
-		)
-		local coefficientsPerAxis = CalculateCoefficientsPerAxisForSegment(baseCurveMapper, segmentDetails.Index)
+		--[[
+			Find the spline segment index and the corresponding segment weight/fraction
+			at the provided non-linear progress on the curve
+		]]
+		local segmentIndex, weight
+		do
+			-- This is equal to the last valid segment-index + full-weight (1)
+			local maximumPointSegmentIndex = (
+				self.Closed
+				and (self.PointCount + 1)
+				or self.PointCount
+			)
 
+			-- If we're at the end we can take this shortcut
+			if time == 1 then
+				segmentIndex, weight = (maximumPointSegmentIndex - 1), 1
+			else
+				local rawPointCountIndex = Utils.GetIndexFromScale(time, maximumPointSegmentIndex, true)
+				segmentIndex = math.floor(rawPointCountIndex)
+				weight = (rawPointCountIndex - segmentIndex)
+			end
+		end
+
+		-- Finally, calculate our axis-coefficients
 		return SplineSegment.ProcessAxisCoefficientsAtSegmentTime(
 			processor,
-			segmentDetails.Weight, coefficientsPerAxis
+			weight, self.SegmentCoefficientsPerAxis[segmentIndex]
 		)
+	end
+end
+
+-- State Management Functions
+do
+	function UpdateCache(self: BaseCurveMapperInternal)
+		CalculateCoefficientsPerAxisForSegments(self)
+
+		if self.OnCacheUpdate ~= nil then
+			self.OnCacheUpdate(self)
+		end
+
+		if self.ConfigurationOnCacheUpdate ~= nil then
+			self.ConfigurationOnCacheUpdate(self)
+		end
+	end
+
+	function AssertPoints(points: InternalTypes.Points)
+		if #points < 2 then
+			error(`At least 2 points are required!`)
+		end
 	end
 end
 
 -- State Management Methods
 do
-	function InvalidateCache(baseCurveMapper: BaseCurveMapperInternal)
-		baseCurveMapper.CachedCoefficientsPerAxis = {}
-
-		if baseCurveMapper.OnCacheInvalidation ~= nil then
-			baseCurveMapper.OnCacheInvalidation()
-		end
-	end
-
 	function SetCurviness(
-		baseCurveMapper: BaseCurveMapperInternal,
+		self: BaseCurveMapperInternal,
 		curviness: number
 	)
 		-- Validate we are in range
 		Utils.AssertInRange(curviness)
 
 		-- Now check if we've changed
-		if curviness ~= baseCurveMapper.Curviness then
-			baseCurveMapper.Curviness = curviness
-			InvalidateCache(baseCurveMapper)
+		if curviness ~= self.Curviness then
+			self.Curviness = curviness
+			UpdateCache(self)
 		end
 	end
 
 	function SetSoftness(
-		baseCurveMapper: BaseCurveMapperInternal,
+		self: BaseCurveMapperInternal,
 		softness: number
 	)
 		-- Validate we are in range
 		Utils.AssertInRange(softness)
 
 		-- Now check if we've changed
-		if softness ~= baseCurveMapper.Softness then
-			baseCurveMapper.Softness = softness
-			InvalidateCache(baseCurveMapper)
+		if softness ~= self.Softness then
+			self.Softness = softness
+			UpdateCache(self)
 		end
 	end
 
 	function SetPoints(
-		baseCurveMapper: BaseCurveMapperInternal,
+		self: BaseCurveMapperInternal,
 		points: InternalTypes.Points
 	)
-		if #points < 2 then
-			error(`At least 2 points are required!`)
-		end
+		AssertPoints(points)
 
-		baseCurveMapper.Points = points
-		InvalidateCache(baseCurveMapper)
+		self.Points, self.PointCount = points, #points
+		UpdateCache(self)
 	end
 
 	function SetClosedState(
-		baseCurveMapper: BaseCurveMapperInternal,
+		self: BaseCurveMapperInternal,
 		isClosed: boolean
 	)
-		if baseCurveMapper.Closed ~= isClosed then
-			baseCurveMapper.Closed = isClosed
-			InvalidateCache(baseCurveMapper)
+		if self.Closed ~= isClosed then
+			self.Closed = isClosed
+			UpdateCache(self)
 		end
 	end
 end
@@ -153,11 +178,9 @@ end
 -- Contructor
 local InterfaceMethods = {
 	-- Worker Methods
-	CalculateCoefficientsPerAxisForSegment = CalculateCoefficientsPerAxisForSegment;
 	ProcessAxisCoefficientsAtTime = ProcessAxisCoefficientsAtTime;
 
 	-- State Management
-	InvalidateBaseCache = InvalidateCache;
 	SetCurviness = SetCurviness;
 	SetSoftness = SetSoftness;
 	SetPoints = SetPoints;
@@ -167,26 +190,29 @@ export type BaseCurveMapper = (
 	BaseCurveMapperInternal
 	& {
 		-- Worker Methods
-		CalculateCoefficientsPerAxisForSegment: typeof(CalculateCoefficientsPerAxisForSegment);
 		ProcessAxisCoefficientsAtTime: typeof(ProcessAxisCoefficientsAtTime);
 
 		-- State Management
-		InvalidateBaseCache: typeof(InvalidateCache);
 		SetCurviness: typeof(SetCurviness);
 		SetSoftness: typeof(SetSoftness);
 		SetPoints: typeof(SetPoints);
 		SetClosedState: typeof(SetClosedState);
 	}
 )
-function Interface.new(configuration: Configuration): BaseCurveMapper
+function Interface.new(configuration: Configuration, doNotUpdateCache: true?): BaseCurveMapper
+	AssertPoints(configuration.Points)
+	Utils.AssertInRange(configuration.Curviness)
+	Utils.AssertInRange(configuration.Softness)
+
 	local base = {
-		CachedCoefficientsPerAxis = {};
-		OnCacheInvalidation = configuration.OnCacheInvalidation;
+		SegmentCoefficientsPerAxis = {};
+		ConfigurationOnCacheUpdate = configuration.OnCacheUpdate;
 
 		Curviness = configuration.Curviness;
 		Softness = configuration.Softness;
 
 		Points = configuration.Points;
+		PointCount = #configuration.Points;
 		Closed = configuration.Closed;
 	}
 
@@ -194,12 +220,16 @@ function Interface.new(configuration: Configuration): BaseCurveMapper
 		base[methodName] = methodReference
 	end
 
+	if doNotUpdateCache == nil then
+		UpdateCache(base)
+	end
+
 	return base
 end
 export type ImplementedCurveMapper = (
 	BaseCurveMapper
 	& {
-		InvalidateCache: ((self: ImplementedCurveMapper) -> ());
+		OnCacheUpdate: ((self: ImplementedCurveMapper) -> ());
 		GetDistanceFromProgress: ((self: ImplementedCurveMapper, progress: number) -> number);
 		GetTimeFromProgress: ((self: ImplementedCurveMapper, progress: number) -> number);
 		GetProgressFromTime: ((self: ImplementedCurveMapper, time: number) -> number);
@@ -208,13 +238,13 @@ export type ImplementedCurveMapper = (
 function Interface.Implement(
 	configuration: Configuration,
 	properties: any,
-	invalidateCache: ((self: any) -> ()),
+	onCacheUpdate: ((self: any) -> ()),
 	getDistanceFromProgress: ((self: any, progress: number) -> number),
 	getTimeFromProgress: ((self: any, progress: number) -> number),
 	getProgressFromTime: ((self: any, time: number) -> number)
 ): ImplementedCurveMapper
 	-- Create our base
-	local base = Interface.new(configuration)
+	local base = Interface.new(configuration, true)
 
 	-- Merge our properties
 	for propertyName, propertyValue in pairs(properties) do
@@ -222,10 +252,13 @@ function Interface.Implement(
 	end
 
 	-- Add our methods
-	base.InvalidateCache = invalidateCache
+	base.OnCacheUpdate = onCacheUpdate
 	base.GetDistanceFromProgress = getDistanceFromProgress
 	base.GetTimeFromProgress = getTimeFromProgress
 	base.GetProgressFromTime = getProgressFromTime
+
+	-- Update our cache
+	UpdateCache(base)
 
 	-- Return the implemented result
 	return base

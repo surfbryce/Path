@@ -5,7 +5,6 @@ local Root = script.Parent.Parent
 local InternalTypes = require(Root.Core.InternalTypes)
 
 -- Core Modules
-local Math = require(Root.Core.Math)
 local Utils = require(Root.Core.Utils)
 
 -- Spline Modules
@@ -26,8 +25,9 @@ type NumericalCurveMapperInternal = (
 		Gauss: FindGauss.Gauss;
 		SampleCount: number;
 
-		CachedSamples: Samples;
-		CachedArcLengths: InternalTypes.ArcLengths?;
+		SegmentSamples: Samples;
+		SegmentArcLengths: InternalTypes.ArcLengths;
+		SegmentArcLengthCount: number;
 	}
 )
 
@@ -49,7 +49,7 @@ local Interface = {
 do
 	-- Computes the arc length of a curve segment
 	function ComputeArcLength(
-		numericalCurveMapper: NumericalCurveMapperInternal,
+		self: NumericalCurveMapperInternal,
 		segmentIndex: number, startTime: number?, endTime: number?
 	)
 		local startTime, endTime = (startTime or 0), (endTime or 1)
@@ -57,65 +57,97 @@ do
 			return 0
 		end
 
-		local coefficients = numericalCurveMapper:CalculateCoefficientsPerAxisForSegment(segmentIndex)
+		local coefficients = self.SegmentCoefficientsPerAxis[segmentIndex]
 		local z = ((endTime - startTime) * 0.5)
 		local sum = 0
-		for index = 1, #numericalCurveMapper.Gauss do
-			local gauss = numericalCurveMapper.Gauss[index]
+		for index = 1, #self.Gauss do
+			local gauss = self.Gauss[index]
 			local segmentTime = (startTime + (z * gauss[1]) + z)
 			local deltaLength = SplineSegment.ProcessAxisCoefficientsAtSegmentTime(
 				SplineSegment.GetDerivativeAtTime, segmentTime,
 				coefficients
 			).Magnitude
+
 			sum += (gauss[2] * deltaLength)
 		end
 
 		return (z * sum)
 	end
 
+	-- Calculate Time from arc length for a curve segment
+	function GetTimeFromArcLength(
+		self: NumericalCurveMapperInternal,
+		segmentIndex: number, length: number
+	): number
+		-- Extract our samples
+		local samples = self.SegmentSamples[segmentIndex]
+		local lengths, slopes = samples[1], samples[2]
+		local degree2Coefficients, degree3Coefficients = samples[3], samples[4]
+		local maximumLength = lengths[#lengths]
+
+		-- Handle shortcuts
+		if length >= maximumLength then
+			return 1
+		elseif length <= 0 then
+			return 0
+		end
+
+		-- Find the cubic-segment which has our length
+		local coefficientCount = (self.SampleCount - 1)
+		local step = (1 / coefficientCount)
+		local index = Utils.BinarySearch(length, lengths)
+		local indexTime = ((index - 1) * step)
+		if lengths[index] == length then
+			return indexTime
+		end
+
+		-- Otherwise, calculate the remaining progress from our provided segment
+		local slope, degree3, degree2 = slopes[index], degree3Coefficients[index], degree2Coefficients[index]
+		local lengthDelta = (length - lengths[index])
+
+		return (indexTime + (((((degree3 * lengthDelta) + degree2) * lengthDelta) + slope) * lengthDelta))
+	end
+end
+
+-- Storage Functions
+do
 	--[[
 		Break curve into segments and return the curve length at each segment index.
 		Used for mapping between 'Time' and 'Progress' along the curve.
 	]]
-	function ComputeArcLengths(
-		numericalCurveMapper: NumericalCurveMapperInternal
-	): InternalTypes.ArcLengths
+	function ComputeArcLengths(self: NumericalCurveMapperInternal)
 		-- Make sure we even have points
-		local points = numericalCurveMapper.Points
+		local points = self.Points
 
 		-- Now prepare ourselves for length computation
 		local lengths: InternalTypes.ArcLengths = {0}
-		local pointCount = (numericalCurveMapper.Closed and #points or (#points - 1))
 		local sum = 0
-		for index = 1, pointCount do
-			local length = ComputeArcLength(numericalCurveMapper, index)
+		for segmentIndex = 1, (self.Closed and self.PointCount or (self.PointCount - 1)) do
+			local length = ComputeArcLength(self, segmentIndex)
 			sum += length
 			table.insert(lengths, sum)
 		end
 
-		return lengths
+		self.SegmentArcLengths = lengths
+		self.SegmentArcLengthCount = #lengths
 	end
 
 	--[[
-		Get samples for inverse function from cache if present, otherwise calculate and put
+		Computes samples for inverse function from cache if present, otherwise calculate and put
 		in cache for re-use.
 
 		Returns lengths, slopes, and 2nd/3rd coefficients for inverse function.
 	]]
-	function GetSamples(
-		numericalCurveMapper: NumericalCurveMapperInternal,
-		segmentIndex: number
-	): Samples
+	function ComputeAllSegmentSamples(self: NumericalCurveMapperInternal)
 		-- Make sure we even have points
-		local points = numericalCurveMapper.Points
-
-		-- Check if our samples exist (or if we have to create them)
-		local samples = numericalCurveMapper.CachedSamples[segmentIndex]
-		if samples == nil then
+		local points = self.Points
+		local pointCount = self.PointCount
+		local samples = {}
+		for segmentIndex = 1, (self.Closed and pointCount or (pointCount - 1)) do
 			-- Calculate our lengths/slopes
-			local sampleCount = numericalCurveMapper.SampleCount
+			local sampleCount = self.SampleCount
 			local lengths: {number}, slopes: {number} = {}, {}
-			local coefficients = numericalCurveMapper:CalculateCoefficientsPerAxisForSegment(segmentIndex)
+			local coefficients = self.SegmentCoefficientsPerAxis[segmentIndex]
 			for index = 1, sampleCount do
 				local sampleTime = Utils.GetIterationProgress(index, sampleCount)
 				local deltaLength = SplineSegment.ProcessAxisCoefficientsAtSegmentTime(
@@ -125,12 +157,12 @@ do
 				local slope = ((deltaLength == 0) and 0 or (1 / deltaLength))
 
 				-- Avoid extreme slopes for near linear curves at the segment endpoints (low curviness parameter value)
-				if numericalCurveMapper.Curviness < 0.05 then
+				if self.Curviness < 0.05 then
 					slope = math.clamp(slope, -1, 1)
 				end
 
 				table.insert(slopes, slope)
-				table.insert(lengths, ComputeArcLength(numericalCurveMapper, segmentIndex, 0, sampleTime))
+				table.insert(lengths, ComputeArcLength(self, segmentIndex, 0, sampleTime))
 			end
 
 			-- Precalculate the cubic interpolant coefficients
@@ -161,75 +193,30 @@ do
 			end
 
 			-- Now store our sample
-			samples = {lengths, slopes, degree2Coefficients, degree3Coefficients}
-			numericalCurveMapper.CachedSamples[segmentIndex] = samples
+			samples[segmentIndex] = {lengths, slopes, degree2Coefficients, degree3Coefficients}
 		end
 
-		return samples
-	end
-
-	-- Calculate Time from arc length for a curve segment
-	function GetTimeFromArcLength(
-		numericalCurveMapper: NumericalCurveMapperInternal,
-		segmentIndex: number, length: number
-	): number
-		-- Extract our samples
-		local samples = GetSamples(numericalCurveMapper, segmentIndex)
-		local lengths, slopes = samples[1], samples[2]
-		local degree2Coefficients, degree3Coefficients = samples[3], samples[4]
-		local maximumLength = lengths[#lengths]
-
-		-- Handle shortcuts
-		if length >= maximumLength then
-			return 1
-		elseif length <= 0 then
-			return 0
-		end
-
-		-- Find the cubic-segment which has our length
-		local coefficientCount = (numericalCurveMapper.SampleCount - 1)
-		local step = (1 / coefficientCount)
-		local index = Utils.BinarySearch(length, lengths)
-		local indexTime = ((index - 1) * step)
-		if lengths[index] == length then
-			return indexTime
-		end
-
-		-- Otherwise, calculate the remaining progress from our provided segment
-		local slope, degree3, degree2 = slopes[index], degree3Coefficients[index], degree2Coefficients[index]
-		local lengthDelta = (length - lengths[index])
-
-		return (indexTime + (((((degree3 * lengthDelta) + degree2) * lengthDelta) + slope) * lengthDelta))
+		-- Store our samples
+		self.SegmentSamples = samples
 	end
 end
 
 -- Worker Methods
 do
-	function GetArcLengths(numericalCurveMapper: NumericalCurveMapperInternal): InternalTypes.ArcLengths
-		local arcLengths = numericalCurveMapper.CachedArcLengths
-		if arcLengths == nil then
-			arcLengths = ComputeArcLengths(numericalCurveMapper)
-			numericalCurveMapper.CachedArcLengths = arcLengths
-		end
-
-		return arcLengths
-	end
-
 	function GetDistanceFromProgress(
-		numericalCurveMapper: NumericalCurveMapperInternal,
+		self: NumericalCurveMapperInternal,
 		progress: number
 	): number
-		local arcLengths = GetArcLengths(numericalCurveMapper)
-		return (Utils.AssertInRange(progress) * arcLengths[#arcLengths])
+		return (Utils.AssertInRange(progress) * self.SegmentArcLengths[self.SegmentArcLengthCount])
 	end
 
 	function GetTimeFromProgress(
-		numericalCurveMapper: NumericalCurveMapperInternal,
+		self: NumericalCurveMapperInternal,
 		progress: number
 	): number
 		-- Grab arc-length information
-		local arcLengths = GetArcLengths(numericalCurveMapper)
-		local totalArcLengths = #arcLengths
+		local arcLengths = self.SegmentArcLengths
+		local totalArcLengths = self.SegmentArcLengthCount
 		local targetArcLength = (Utils.AssertInRange(progress) * arcLengths[totalArcLengths])
 
 		-- Try to see if we can find our desired arc-length immediately
@@ -240,16 +227,16 @@ do
 
 		-- Otherwise, return the progress based off our remaining length
 		local remainingLength = (targetArcLength - arcLengths[arcIndex])
-		local fraction = GetTimeFromArcLength(numericalCurveMapper, arcIndex, remainingLength)
+		local fraction = GetTimeFromArcLength(self, arcIndex, remainingLength)
 		return Utils.GetIterationProgress((arcIndex + fraction), totalArcLengths)
 	end
 
 	function GetProgressFromTime(
-		numericalCurveMapper: NumericalCurveMapperInternal,
+		self: NumericalCurveMapperInternal,
 		time: number
 	): number
 		Utils.AssertInRange(time)
-		
+
 		-- Immediate shortcuts (known values)
 		if time == 0 then
 			return 0
@@ -258,8 +245,8 @@ do
 		end
 
 		-- Grab our arc-length information
-		local arcLengths = GetArcLengths(numericalCurveMapper)
-		local totalArcLengths = #arcLengths
+		local arcLengths = self.SegmentArcLengths
+		local totalArcLengths = self.SegmentArcLengthCount
 		local totalLength = arcLengths[totalArcLengths]
 
 		-- Need to denormalize our progress to find the matching length
@@ -272,16 +259,15 @@ do
 
 		-- Find the remaining distance
 		local deltaIndex = (denormalizedTimeIndex - subDenormalizedTimeIndex)
-		local fraction = ComputeArcLength(numericalCurveMapper, subDenormalizedTimeIndex, 0, deltaIndex)
+		local fraction = ComputeArcLength(self, subDenormalizedTimeIndex, 0, deltaIndex)
 		return ((subDenormalizedTimeLength + fraction) / totalLength)
 	end
 end
 
--- State Management Methods
-function InvalidateCache(numericalCurveMapper: NumericalCurveMapperInternal)
-	numericalCurveMapper.CachedArcLengths = nil
-	numericalCurveMapper.CachedSamples = {}
-	numericalCurveMapper:InvalidateBaseCache()
+-- State Management Functions
+function OnCacheUpdate(self: NumericalCurveMapperInternal)
+	ComputeArcLengths(self)
+	ComputeAllSegmentSamples(self)
 end
 
 -- Constructor
@@ -294,11 +280,8 @@ function Interface.new(
 		{
 			Gauss = FindGauss(quadraturePointCount);
 			SampleCount = inverseSamples;
-
-			CachedSamples = {};
-			CachedArcLengths = nil;
 		},
-		InvalidateCache,
+		OnCacheUpdate,
 		GetDistanceFromProgress,
 		GetTimeFromProgress,
 		GetProgressFromTime
