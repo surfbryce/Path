@@ -1,4 +1,4 @@
-# Path (Create a Path from any # of Points)
+# Path: A Performant Module for Creating Paths on Roblox
 
 This is @kjerandp's [Curve Interpolator](https://github.com/kjerandp/curve-interpolator) **implemented into Roblox** and **_fully-typed_ in Luau**.
 
