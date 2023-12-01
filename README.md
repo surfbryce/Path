@@ -1,8 +1,8 @@
 # Curve Interpolator
 
-https://github.com/surfbryce/Curve-Interpolator-Roblox/assets/80861823/c7ae034c-0a35-474c-a3eb-c4e7b0bb1a8b
-
 This is @kjerandp's [Curve Interpolator](https://github.com/kjerandp/curve-interpolator) **implemented into Roblox** and **_fully-typed_ in Luau**.
+
+https://github.com/surfbryce/Curve-Interpolator-Roblox/assets/80861823/c7ae034c-0a35-474c-a3eb-c4e7b0bb1a8b
 
 As the original states, this library is for:
 > Interpolating values over a cubic Cardinal/Catmull-Rom spline curve of n-dimenesions
