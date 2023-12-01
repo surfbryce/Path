@@ -19,7 +19,7 @@ local NumericalCurveMapper = require(Root.CurveMappers.NumericalCurveMapper)
 -- Our Types
 type LookupTable<V> = {[number]: V}
 type CachedLookupTables = {[string]: LookupTable<any>}
-type CurveInterpolatorInternal = (
+type PathInternal = (
 	BaseCurveMapper.ImplementedCurveMapper
 	& {
 		IntersectionMargin: number;
@@ -69,7 +69,7 @@ do
 		ForceCacheUpdate: true?;
 	}
 	function CreateLookupTable<V>(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		valueGenerator: ((progress: number) -> V),
 		samples: number, cacheKey: string
 	): LookupTable<V>
@@ -99,7 +99,7 @@ end
 -- Worker Methods
 do
 	function GetPointAtTime(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		time: number
 	): InternalTypes.Point
 		-- Validate we are in range
@@ -118,28 +118,28 @@ do
 	end
 
 	function GetPointAtProgress(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		progress: number
 	): InternalTypes.Point
 		return GetPointAtTime(self, self:GetTimeFromProgress(progress))
 	end
 
 	function GetTangentAtTime(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		time: number
 	): InternalTypes.Point
 		return self:ProcessAxisCoefficientsAtTime(SplineSegment.GetDerivativeAtTime, Utils.AssertInRange(time)).Unit
 	end
 
 	function GetTangentAtProgress(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		progress: number
 	): InternalTypes.Point
 		return GetTangentAtTime(self, self:GetTimeFromProgress(progress))
 	end
 
 	function GetNormalAtTime(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		time: number
 	): InternalTypes.Point
 		Utils.AssertInRange(time)
@@ -150,7 +150,7 @@ do
 	end
 
 	function GetNormalAtProgress(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		progress: number
 	): InternalTypes.Point
 		return GetNormalAtTime(self, self:GetTimeFromProgress(progress))
@@ -168,7 +168,7 @@ do
 		Tangent: InternalTypes.Point;
 	}
 	function GetCurvatureAtTime(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		time: number
 	): CurvatureDetails
 		Utils.AssertInRange(time)
@@ -194,7 +194,7 @@ do
 	end
 
 	function GetCurvatureAtProgress(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		progress: number
 	): CurvatureDetails
 		return GetCurvatureAtTime(self, self:GetTimeFromProgress(progress))
@@ -212,7 +212,7 @@ do
 		Distance: number;
 	}
 	function GetClosestDetailsToPoint(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		point: InternalTypes.Point,
 		threshold: number?, samples: number?
 	): ClosestDetails
@@ -281,7 +281,7 @@ do
 
 	type Axis = ("X" | "Y" | "Z")
 	function FindTimeIntersectionsOnAxis(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		valueToIntersect: number, axis: Axis,
 		margin: number?
 	): {number}
@@ -323,7 +323,7 @@ do
 	end
 
 	function FindProgressIntersectionsOnAxis(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		valueToIntersect: number, axis: Axis,
 		margin: number?
 	): {number}
@@ -335,7 +335,7 @@ do
 	end
 
 	function FindPointIntersectionsOnAxis(
-		self: CurveInterpolatorInternal,
+		self: PathInternal,
 		valueToIntersect: number, axis: Axis,
 		margin: number?
 	): {InternalTypes.Point}
@@ -346,13 +346,13 @@ do
 		return intersections
 	end
 
-	function GetTotalDistance(self: CurveInterpolatorInternal)
+	function GetTotalDistance(self: PathInternal)
 		return self:GetDistanceFromProgress(1)
 	end
 end
 
 -- State Management Functions
-function OnCacheUpdate(self: CurveInterpolatorInternal)
+function OnCacheUpdate(self: PathInternal)
 	self.CachedLookupTables = {}
 end
 
@@ -380,8 +380,8 @@ local InterfaceMethods = {
 	-- State Management Methods
 	GetTotalDistance = GetTotalDistance;
 }
-export type CurveInterpolator = (
-	CurveInterpolatorInternal
+export type Path = (
+	PathInternal
 	& {
 		-- Worker Methods
 		GetPointAtTime: typeof(GetPointAtTime);
@@ -418,7 +418,7 @@ export type Options = {
 	NumericalInverseSamples: number?;
 }
 
-function Interface.new(points: InternalTypes.Points, options: Options?): CurveInterpolator
+function Interface.new(points: InternalTypes.Points, options: Options?): Path
 	-- Default our options
 	local curviness = (((options ~= nil) and options.Curviness) or SplineSegment.DefaultCurviness)
 	local softness = (((options ~= nil) and options.Softness) or SplineSegment.DefaultSoftness)
@@ -426,7 +426,7 @@ function Interface.new(points: InternalTypes.Points, options: Options?): CurveIn
 	local intersectionMargin = (((options ~= nil) and options.IntersectionMargin) or curviness)
 
 	-- Now create our curve-mapper
-	local curveInterpolator
+	local path
 	local configuration: BaseCurveMapper.Configuration = {
 		Curviness = curviness;
 		Softness = softness;
@@ -436,7 +436,7 @@ function Interface.new(points: InternalTypes.Points, options: Options?): CurveIn
 
 		OnCacheUpdate = OnCacheUpdate;
 	}
-	curveInterpolator = (
+	path = (
 		if (options ~= nil) and (options.ArcDivisions ~= nil) then
 			SegmentedCurveMapper.new(
 				(((options ~= nil) and options.ArcDivisions) or SegmentedCurveMapper.DefaultSubDivisions),
@@ -451,16 +451,16 @@ function Interface.new(points: InternalTypes.Points, options: Options?): CurveIn
 	)
 
 	-- Add our properties
-	curveInterpolator.IntersectionMargin = intersectionMargin
-	curveInterpolator.CachedLookupTables = {}
+	path.IntersectionMargin = intersectionMargin
+	path.CachedLookupTables = {}
 
 	-- Add our methods
 	for methodName, methodReference in pairs(InterfaceMethods) do
-		curveInterpolator[methodName] = methodReference
+		path[methodName] = methodReference
 	end
 
 	-- Return our interface
-	return curveInterpolator
+	return path
 end
 
 -- Freeze and then return our interface
