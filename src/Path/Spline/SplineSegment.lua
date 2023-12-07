@@ -11,8 +11,9 @@ local Utils = require(Root.Core.Utils)
 local Interface = {}
 
 -- Math Functions
-local Epsilon = (2 ^ -42)
 do
+	local Epsilon = (2 ^ -42)
+
 	function SumOfSquares(a: Vector3, b: Vector3): number
 		return (
 			((a.X - b.X) ^ 2)
@@ -159,22 +160,22 @@ local function CalculateAxisCoefficients(
 			if ((knot1 - knot2) ~= 0) and ((knot1 - knot3) ~= 0) then
 				u = (
 					baseMultiplier
-					* (
-						((value1 - value2) / (knot1 - knot2))
-						- ((value1 - value3) / (knot1 - knot3))
-						+ ((value2 - value3) / (knot2 - knot3))
-					)
+						* (
+							((value1 - value2) / (knot1 - knot2))
+							- ((value1 - value3) / (knot1 - knot3))
+							+ ((value2 - value3) / (knot2 - knot3))
+						)
 				)
 			end
 
 			if ((knot2 - knot4) ~= 0) and ((knot3 - knot4) ~= 0) then
 				v = (
 					baseMultiplier
-					* (
-						((value2 - value3) / (knot2 - knot3))
-						- ((value2 - value4) / (knot2 - knot4))
-						+ ((value3 - value4) / (knot3 - knot4))
-					)
+						* (
+							((value2 - value3) / (knot2 - knot3))
+							- ((value2 - value4) / (knot2 - knot4))
+							+ ((value3 - value4) / (knot3 - knot4))
+						)
 				)
 			end
 		end
@@ -195,8 +196,8 @@ local function CalculateCoefficientsPerAxis(
 	-- Determine our sequence to calculate our coefficients
 	local knotSequence = (
 		(softness > 0)
-		and CalculateKnotSequence(point1, point2, point3, point4, softness)
-		or nil
+			and CalculateKnotSequence(point1, point2, point3, point4, softness)
+			or nil
 	)
 	return {
 		X = CalculateAxisCoefficients(
@@ -231,11 +232,12 @@ end
 local function GetSecondDerivativeAtTime(time: number, coefficients: Coefficients): number
 	return (
 		(6 * coefficients[1] * time)
-		+ (2 * coefficients[2])
+			+ (2 * coefficients[2])
 	)
 end
 
 -- Solves the cubic spline for our intersection-value to get our progress-points (the roots of the spline)
+local IntersectionEpsilon = (2 ^ -20)
 local function FindSegmentTimeIntersectionsOnAxis(valueToIntersect: number, axisCoefficients: Coefficients): {number}
 	-- Extract our coefficients
 	local degree3, degree2 = axisCoefficients[1], axisCoefficients[2]
@@ -250,7 +252,7 @@ local function FindSegmentTimeIntersectionsOnAxis(valueToIntersect: number, axis
 	-- Finally, return all the progress-values where we intersect our provided value
 	local validRoots = {}
 	for _, root in ipairs(GetCubicRoots(degree3, degree2, degree1, deltaConstant)) do
-		if (root > -Epsilon) and (root <= (1 + Epsilon)) then
+		if (root > -IntersectionEpsilon) and (root <= (1 + IntersectionEpsilon)) then
 			table.insert(validRoots, math.clamp(root, 0, 1))
 		end
 	end
